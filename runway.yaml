@@ -1,0 +1,18 @@
+---
+runway_version: ">=2.6.0"
+
+deployments:
+  - name: mi-saas-on-call
+    modules:
+      - mi-saas-on-call.cfn
+    regions: 
+      - us-east-1
+    account_id: ${var account_id.${env DEPLOY_ENVIRONMENT}}
+
+variables:
+  account_id:
+    dev: 713224649065
+  
+  regions:
+    dev:
+      - us-east-1

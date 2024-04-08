@@ -1,0 +1,216 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template for deploying oncall resources.
+Parameters:
+  DynamoDBTableName:
+    Type: String
+    Default: MI-SaaS-OnCallRoster
+    Description: Enter in dynamodb Table name
+  
+  SMSSenderId:
+    Type: String
+    Default: OnCall
+    MinLength: '11'
+    MaxLength: '11'
+    AllowedPattern: '^[a-zA-Z0-9]*$'
+    Description: 'SMS Sender ID. Note: Can only be a string of 11 characters.'
+
+  CodeS3Bucket:
+    Description: Location for the lambda bucket where the zip file resides
+    Type: String
+    Default: ''
+
+  GetOnCallFunctionS3Key:
+    Description: The zip file that contains the lambda code for the GetOnCallFunction
+    Type: String
+    Default: ''
+
+  RotateOnCallFunctionS3Key:
+    Description: The zip file that contains the lambda code for the RotateOnCallFunction
+    Type: String
+    Default: ''
+
+Resources:
+  OnCallDynamoDBTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: !Ref DynamoDBTableName
+      AttributeDefinitions:
+        -
+          AttributeName: id
+          AttributeType: 'N'
+      KeySchema:
+        -
+          AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: '5'
+        WriteCapacityUnits: '5'
+
+  ScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Description: ScheduledRule
+      ScheduleExpression: 'cron(0 0 ? * MON *)'
+      State: ENABLED
+      Targets:
+        -
+          Arn: !GetAtt RotateOnCallFunction.Arn
+          Id: TargetFunctionV1
+
+  PermissionForEventsToInvokeRotateOnCallLambda:
+    DependsOn: rotateoncall
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref RotateOnCallFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledRule.Arn
+
+  RotateOnCallFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: MI-RotateOnCall
+      Handler: index.handler
+      Runtime: python3.12
+      Role: !GetAtt LambdaRotateOnCallExecutionRole.Arn
+      FunctionName: MI-RotateOnCall
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          SMSSenderId:
+            Ref: SMSSenderId
+          DynamoDBTableName:
+            Ref: DynamoDBTableName
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref RotateOnCallFunctionS3Key
+
+  LambdaRotateOnCallExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /service-role/
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess'
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: dynamoDBAccess  
+          PolicyDocument:
+            Statement:
+            - Effect: Allow      
+              Action:
+                - 'dynamodb:Scan'
+                - 'dynamodb:UpdateItem'
+              Resource: 
+                - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTableName}'
+        - PolicyName: snsAccess  
+          PolicyDocument:
+            Statement:
+            - Effect: Allow      
+              Action:
+                - 'sns:Publish'
+              Resource: '*'
+        - PolicyName: logsAccess
+          PolicyDocument:
+            Statement:
+            - Effect: Allow      
+              Action:
+                - 'logs:CreateLogGroup'
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+              Resource: '*'
+
+  PermissionForAWSConnectToInvokeGetOnCallLambda:
+      Type: 'AWS::Lambda::Permission'
+      Properties:
+          FunctionName:
+              Ref: GetOnCallFunction
+          Action: 'lambda:InvokeFunction'
+          Principal: connect.amazonaws.com
+          SourceAccount:
+              Ref: 'AWS::AccountId'
+  
+  GetOnCallFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: MI-GetOnCall
+      Handler: index.handler
+      Runtime: python 3.12
+      Role: !GetAtt LambdaGetOnCallExecutionRole.Arn
+      FunctionName: MI-GetOnCall
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          DynamoDBTableName: !Ref DynamoDBTableName
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref GetOnCallFunctionS3Key
+  
+  LambdaGetOnCallExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /service-role/
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess'
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: dynamoDBAccess  
+          PolicyDocument:
+            Statement:
+            - Effect: Allow      
+              Action:
+                - 'dynamodb:Scan'
+              Resource: 
+                - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDBTableName}'
+        - PolicyName: snsAccess  
+          PolicyDocument:
+            Statement:
+            - Effect: Allow      
+              Action:
+                - 'sns:Publish'
+              Resource: '*'
+        - PolicyName: logsAccess
+          PolicyDocument:
+            Statement:
+            - Effect: Allow      
+              Action:
+                - 'logs:CreateLogGroup'
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+              Resource: '*'
+  
+Outputs:
+  DynamoDBTableName:
+    Description: The name of the DynamoDB table
+    Value: !Ref DynamoDBTableName
+
+  SMSSenderId:
+    Description: The SMS Sender ID
+    Value: !Ref SMSSenderId
+
+  RotateOnCallFunctionArn:
+    Description: The ARN of the RotateOnCallFunction Lambda function
+    Value: !GetAtt RotateOnCallFunction.Arn
+
+  GetOnCallFunctionArn:
+    Description: The ARN of the GetOnCall Lambda function
+    Value: !GetAtt GetOnCallFunction.Arn

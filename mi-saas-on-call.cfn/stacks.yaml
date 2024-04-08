@@ -1,0 +1,37 @@
+sys_path: ./
+namespace: ${namespace}
+cfngin_bucket: cfngin-${namespace}-${environment}-${region}
+environment: ${environment}
+
+pre_deploy:
+  - path: runway.cfngin.hooks.awslambda.PythonFunction
+    enabled: true
+    data_key: rotate_oncall
+    args:
+      source_code: ./lambda_src/rotate_oncall
+      bucket_name: cfngin-${namespace}-${environment}-${region}
+      runtime: python3.9
+      docker:
+        disabled: false
+
+  - path: runway.cfngin.hooks.awslambda.PythonFunction
+    enabled: true
+    data_key: get_oncall
+    args:
+      source_code: ./lambda_src/get_oncall
+      bucket_name: cfngin-${namespace}-${environment}-${region}
+      runtime: python3.9
+      docker:
+        disabled: false
+
+stacks:
+  - name: mi-saas-oncall
+    enabled: true
+    template_path: cloudformation/cidr_lookup.yml
+    variables:
+      Environment: ${environment}
+      CodeS3Bucket: ${awslambda.S3Bucket cidr_lookup}
+      GetOnCallFunctionS3Key: ${awslambda.S3Key get_oncall}
+      RotateOnCallFunctionS3Key: ${awslambda.S3Key rotate_oncall}
+      SMSSenderId: '15555551212'
+  
